@@ -16,3 +16,4 @@ vendor/
 *.tar.gz
 *.zip
 packages/
+outros/
