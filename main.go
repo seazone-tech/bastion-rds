@@ -37,21 +37,21 @@ var (
 		},
 	}
 
-	selectedEnv       Environment
-	localPort         string = "5432"
-	podName          string
-	portForwardCmd   *exec.Cmd
-	errorMessage     string
-	showError        bool
+	selectedEnv    Environment
+	localPort      string = "5432"
+	podName        string
+	portForwardCmd *exec.Cmd
+	errorMessage   string
+	showError      bool
 
 	// Colors
-	green   = color.New(color.FgGreen)
-	red     = color.New(color.FgRed)
-	yellow  = color.New(color.FgYellow)
-	blue    = color.New(color.FgBlue)
-	cyan    = color.New(color.FgCyan)
-	white   = color.New(color.FgWhite, color.Bold)
-	gray    = color.New(color.FgHiBlack)
+	green  = color.New(color.FgGreen)
+	red    = color.New(color.FgRed)
+	yellow = color.New(color.FgYellow)
+	blue   = color.New(color.FgBlue)
+	cyan   = color.New(color.FgCyan)
+	white  = color.New(color.FgWhite, color.Bold)
+	gray   = color.New(color.FgHiBlack)
 )
 
 func main() {
@@ -74,7 +74,7 @@ func setupSignalHandling() {
 	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
 	go func() {
 		<-c
-		cleanup()
+		cleanupResources(true)
 	}()
 }
 
@@ -164,7 +164,7 @@ func selectEnvironment() {
 	fmt.Println()
 
 	envKeys := []string{"STAGING", "PRODUCTION"}
-	
+
 	for i, envKey := range envKeys {
 		env := environments[envKey]
 		switch envKey {
@@ -301,7 +301,7 @@ func showConnectionSummary() {
 
 func establishConnection() {
 	printHeader("ESTABELECENDO CONEXÃO")
-	
+
 	checkPrerequisites()
 	createBastionPod()
 	waitPodReady()
@@ -381,7 +381,7 @@ spec:
 func waitPodReady() {
 	printStep("WAIT", "Aguardando pod ficar pronto...")
 
-	cmd := exec.Command("kubectl", "wait", "--for=condition=Ready", 
+	cmd := exec.Command("kubectl", "wait", "--for=condition=Ready",
 		fmt.Sprintf("pod/%s", podName), "-n", selectedEnv.Namespace, "--timeout=60s")
 	if err := cmd.Run(); err != nil {
 		errorExit("Pod não ficou pronto dentro do tempo limite (60s). Possível problema de recursos ou permissões.")
@@ -397,7 +397,7 @@ func testConnectivity() {
 	time.Sleep(3 * time.Second)
 
 	// Test RDS connectivity
-	cmd := exec.Command("kubectl", "exec", podName, "-n", selectedEnv.Namespace, 
+	cmd := exec.Command("kubectl", "exec", podName, "-n", selectedEnv.Namespace,
 		"--", "nc", "-zv", selectedEnv.RDSHost, "5432")
 	if err := cmd.Run(); err != nil {
 		errorExit(fmt.Sprintf("Não foi possível conectar ao RDS %s:5432. Verifique security groups e conectividade de rede.", selectedEnv.RDSHost))
@@ -411,9 +411,9 @@ func startPortForward() {
 	printStep("FORWARD", "Iniciando port-forward...")
 
 	// Start port-forward
-	portForwardCmd = exec.Command("kubectl", "port-forward", 
+	portForwardCmd = exec.Command("kubectl", "port-forward",
 		fmt.Sprintf("pod/%s", podName), fmt.Sprintf("%s:5432", localPort), "-n", selectedEnv.Namespace)
-	
+
 	if err := portForwardCmd.Start(); err != nil {
 		errorExit(fmt.Sprintf("Port-forward falhou ao iniciar. Porta %s pode estar em uso ou sem permissões.", localPort))
 	}
@@ -456,6 +456,10 @@ func showConnectionInfo() {
 }
 
 func cleanup() {
+	cleanupResources(false)
+}
+
+func cleanupResources(shouldExit bool) {
 	fmt.Println()
 
 	// Show error if any
@@ -485,8 +489,11 @@ func cleanup() {
 			}
 		}
 		fmt.Println()
-		cyan.Print("Pressione Enter para continuar com a limpeza...")
-		bufio.NewReader(os.Stdin).ReadString('\n')
+
+		if shouldExit {
+			cyan.Print("Pressione Enter para continuar com a limpeza...")
+			bufio.NewReader(os.Stdin).ReadString('\n')
+		}
 	}
 
 	printStep("CLEANUP", "Limpando recursos...")
@@ -508,13 +515,29 @@ func cleanup() {
 		}
 	}
 
-	showGoodbyeBanner()
-	os.Exit(0)
+	if shouldExit {
+		showGoodbyeBanner()
+		os.Exit(0)
+	}
 }
 
 func errorExit(message string) {
 	errorMessage = message
 	showError = true
+
+	// Mostrar o erro antes de sair
+	fmt.Println()
+	red.Println("╔════════════════════════════════════════════════════════════════════╗")
+	red.Println("║                             ERRO                                   ║")
+	red.Println("╚════════════════════════════════════════════════════════════════════╝")
+	fmt.Println()
+	printError(errorMessage)
+	fmt.Println()
+
+	// Executar cleanup para mostrar detalhes técnicos
+	cleanupResources(false)
+
+	// Se cleanup não sair, sair aqui
 	os.Exit(1)
 }
 
@@ -530,5 +553,6 @@ func isPortInUse(port string) bool {
 	} else {
 		cmd = exec.Command("lsof", "-i:"+port)
 	}
+	// lsof retorna 0 quando encontra a porta em uso, erro quando não encontra
 	return cmd.Run() == nil
 }
